@@ -47,7 +47,15 @@ feature_cols = data_config['feature_cols']
 df = pd.read_csv('../data/xiaomi_real.csv')
 df['date'] = pd.to_datetime(df['date'])
 
-# 特徵工程（完整版）
+# 特徵工程（完整版 - 帶特徵縮放）
+# 對價格進行歸一化（轉為相對於收盤價的變化率）
+price_cols = ['open', 'high', 'low', 'close']
+for col in price_cols:
+    df[f'{col}_norm'] = df[col] / df['close'] - 1
+
+# 對成交量進行對數變換
+df['volume_log'] = np.log1p(df['volume'])
+
 for span in [5, 10, 20]:
     df[f'ema_{span}'] = df['close'].ewm(span=span, adjust=False).mean()
     df[f'ema_{span}_ratio'] = df['close'] / df[f'ema_{span}'] - 1
@@ -71,8 +79,8 @@ loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
 df['rsi_14'] = 100 - (100 / (1 + gain/loss))
 
 df['obv'] = (np.sign(df['close'].diff()) * df['volume']).cumsum()
-df['volume_ma_20'] = df['volume'].rolling(window=20).mean()
-df['volume_ratio'] = df['volume'] / df['volume_ma_20']
+df['obv_log'] = np.log1p(np.abs(df['obv'])) * np.sign(df['obv'])  # 對數變換並保留符號
+df['volume_ratio'] = df['volume'] / df['volume'].rolling(20).mean()
 
 df['return_1d'] = df['close'].pct_change(1)
 df['return_5d'] = df['close'].pct_change(5)
@@ -80,7 +88,13 @@ df['volatility_20d'] = df['return_1d'].rolling(window=20).std()
 df['target_return_5d'] = df['close'].pct_change(5).shift(-5)
 df['target_direction'] = (df['target_return_5d'] > 0).astype(int)
 
-df_clean = df[feature_cols + ['target_return_5d', 'target_direction', 'date']].dropna()
+# 更新 feature_cols 使用歸一化後的特徵
+feature_cols = ['open_norm', 'high_norm', 'low_norm', 'close_norm', 'volume_log',
+                'ema_5_ratio', 'ema_10_ratio', 'ema_20_ratio',
+                'macd', 'macd_hist', 'atr_ratio', 'rsi_14',
+                'volume_ratio', 'obv_log', 'return_1d', 'return_5d', 'volatility_20d']
+
+df_clean = df[feature_cols + ['target_return_5d', 'target_direction', 'date', 'close']].dropna()
 
 # 劃分數據集
 train_ratio = 0.7
@@ -317,7 +331,7 @@ buyhold_returns = []
 
 for i in range(len(test_preds)):
     if pred_directions[i] == 1:
-        daily_ret = test_targets_return[i]
+        daily_ret = float(np.array(test_targets_return[i]).flatten()[0])
     else:
         daily_ret = 0
     capital *= (1 + daily_ret)
