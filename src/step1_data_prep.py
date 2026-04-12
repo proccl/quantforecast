@@ -60,7 +60,7 @@ print(f"\n數據預覽:")
 print(df.head())
 
 # 保存原始數據
-df.to_csv('xiaomi_raw.csv', index=False)
+df.to_csv('../data/xiaomi_raw.csv', index=False)
 print("\n✓ 原始數據已保存: xiaomi_raw.csv")
 
 print("\n" + "=" * 60)

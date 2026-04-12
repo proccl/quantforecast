@@ -12,7 +12,7 @@ print("【步驟 3/8】數據預處理 - 使用真實數據 + RevIN")
 print("=" * 60)
 
 # 讀取真實數據
-df = pd.read_csv('xiaomi_real.csv')
+df = pd.read_csv('../data/xiaomi_real.csv')
 df['date'] = pd.to_datetime(df['date'])
 
 print(f"\n【3.0】載入真實數據")

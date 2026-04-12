@@ -37,7 +37,7 @@ print(f"配置特徵數: {N_FEATURES}")
 print(f"實際feature_cols數: {len(feature_cols)}")
 
 # 載入數據
-df = pd.read_csv('xiaomi_real.csv')
+df = pd.read_csv('../data/xiaomi_real.csv')
 df['date'] = pd.to_datetime(df['date'])
 
 # 使用與訓練時相同的特徵

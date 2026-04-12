@@ -34,7 +34,7 @@ print(f"  預測長度: {PRED_LEN} 天")
 print(f"  特徵數: {N_FEATURES}")
 
 # 載入數據
-df = pd.read_csv('xiaomi_real.csv')
+df = pd.read_csv('../data/xiaomi_real.csv')
 df['date'] = pd.to_datetime(df['date'])
 
 # 特徵工程

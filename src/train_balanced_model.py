@@ -34,7 +34,7 @@ STRIDE = best_config['stride']
 print(f"\n配置: seq_len={SEQ_LEN}, patch_len={PATCH_LEN}, d_model={best_config['d_model']}")
 
 # 載入數據
-df = pd.read_csv('xiaomi_real.csv')
+df = pd.read_csv('../data/xiaomi_real.csv')
 df['date'] = pd.to_datetime(df['date'])
 
 # 特徵工程

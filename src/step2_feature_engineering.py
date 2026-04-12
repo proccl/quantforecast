@@ -7,7 +7,7 @@ print("【步驟 2/8】特徵工程 - 根據最佳實踐文檔")
 print("=" * 60)
 
 # 載入數據
-df = pd.read_csv('xiaomi_raw.csv')
+df = pd.read_csv('../data/xiaomi_raw.csv')
 df['date'] = pd.to_datetime(df['date'])
 
 print("\n【2.1】技術指標特徵計算")
@@ -107,7 +107,7 @@ print(f"✓ 特徵列表: {feature_cols}")
 print(f"✓ 清洗後樣本數: {len(df_clean)} (原{len(df)}, 去除缺失值)")
 
 # 保存特徵數據
-df_clean.to_csv('xiaomi_features.csv', index=False)
+df_clean.to_csv('../data/xiaomi_features.csv', index=False)
 print("\n✓ 特徵數據已保存: xiaomi_features.csv")
 
 # 可視化特徵

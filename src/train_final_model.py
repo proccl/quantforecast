@@ -53,7 +53,7 @@ print(f"特徵數: {N_FEATURES}")
 print("\n【載入真實數據】")
 print("-" * 50)
 
-df = pd.read_csv('xiaomi_real.csv')
+df = pd.read_csv('../data/xiaomi_real.csv')
 df['date'] = pd.to_datetime(df['date'])
 
 # 特徵工程

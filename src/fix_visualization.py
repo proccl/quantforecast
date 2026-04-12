@@ -12,7 +12,7 @@ print("【特徵可視化】小米(1810.HK) - 使用真實數據")
 print("=" * 60)
 
 # 載入真實數據
-df = pd.read_csv('xiaomi_real.csv')
+df = pd.read_csv('../data/xiaomi_real.csv')
 df['date'] = pd.to_datetime(df['date'])
 
 print(f"\n數據範圍: {df['date'].iloc[0].strftime('%Y-%m-%d')} 至 {df['date'].iloc[-1].strftime('%Y-%m-%d')}")

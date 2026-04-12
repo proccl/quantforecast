@@ -44,7 +44,7 @@ with open('data_config.pkl', 'rb') as f:
 feature_cols = data_config['feature_cols']
 
 # 載入並處理數據
-df = pd.read_csv('xiaomi_real.csv')
+df = pd.read_csv('../data/xiaomi_real.csv')
 df['date'] = pd.to_datetime(df['date'])
 
 # 特徵工程（完整版）

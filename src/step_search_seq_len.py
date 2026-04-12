@@ -22,7 +22,7 @@ print("- 過長: 計算成本高，可能包含無關的過時信息")
 print("=" * 70)
 
 # 載入數據
-df = pd.read_csv('xiaomi_features.csv')
+df = pd.read_csv('../data/xiaomi_features.csv')
 df['date'] = pd.to_datetime(df['date'])
 
 feature_cols = [col for col in df.columns if col not in ['target_return_5d', 'target_direction', 'date']]

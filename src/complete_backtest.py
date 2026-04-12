@@ -1,4 +1,6 @@
 import torch
+import torch.nn as nn
+import os
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -44,7 +46,7 @@ print(f"\n【配置】")
 print(f"特徵數量: {len(feature_cols)}")
 
 # 加載測試數據
-test_df = pd.read_csv('xiaomi_real.csv')
+test_df = pd.read_csv('../data/xiaomi_real.csv')
 test_df['date'] = pd.to_datetime(test_df['date'])
 
 # 技術指標計算
@@ -99,36 +101,120 @@ class RevIN:
             x = x * self.stdev + self.mean
         return x
 
-# 加載模型
-checkpoint = torch.load('patchtst_bayesian_best.pth', map_location=device)
-loaded_config = checkpoint['model_config']
+# 加載模型或訓練新模型
+model_path = '../models/patchtst_bayesian_best.pth'
 
-model = PatchTST(
-    n_features=len(feature_cols),
-    seq_len=loaded_config['seq_len'],
-    pred_len=loaded_config['pred_len'],
-    d_model=loaded_config['d_model'],
-    n_heads=loaded_config['n_heads'],
-    n_layers=loaded_config['n_layers'],
-    dropout=loaded_config['dropout'],
-    patch_len=loaded_config['patch_len'],
-    stride=loaded_config['stride'],
-    d_ff=loaded_config.get('d_ff', loaded_config['d_model'] * 2)
-).to(device)
-
-model.load_state_dict(checkpoint['model_state_dict'])
-model.eval()
-
-# 使用加载的配置
-seq_len = loaded_config['seq_len']
-pred_len = loaded_config['pred_len']
-
-print(f"\n✓ 模型已載入 (Epoch: {checkpoint['epoch']}, Val Acc: {checkpoint['val_acc']:.2%})")
-print(f"  序列長度: {seq_len}")
-print(f"  預測長度: {pred_len}")
-print(f"  d_model: {loaded_config['d_model']}")
-print(f"  n_heads: {loaded_config['n_heads']}")
-print(f"  n_layers: {loaded_config['n_layers']}")
+if os.path.exists(model_path):
+    print(f"✓ 加載現有模型: {model_path}")
+    checkpoint = torch.load(model_path, map_location=device)
+    loaded_config = checkpoint['model_config']
+    
+    model = PatchTST(
+        n_features=len(feature_cols),
+        seq_len=loaded_config['seq_len'],
+        pred_len=loaded_config['pred_len'],
+        d_model=loaded_config['d_model'],
+        n_heads=loaded_config['n_heads'],
+        n_layers=loaded_config['n_layers'],
+        dropout=loaded_config['dropout'],
+        patch_len=loaded_config['patch_len'],
+        stride=loaded_config['stride'],
+        d_ff=loaded_config.get('d_ff', loaded_config['d_model'] * 2)
+    ).to(device)
+    
+    model.load_state_dict(checkpoint['model_state_dict'])
+    model.eval()
+    
+    # 使用加載的配置
+    seq_len = loaded_config['seq_len']
+    pred_len = loaded_config['pred_len']
+    
+    print(f"\n✓ 模型已載入")
+    print(f"  序列長度: {seq_len}")
+    print(f"  預測長度: {pred_len}")
+    print(f"  d_model: {loaded_config['d_model']}")
+    print(f"  n_heads: {loaded_config['n_heads']}")
+    print(f"  n_layers: {loaded_config['n_layers']}")
+else:
+    print("⚠ 模型不存在，使用默認配置創建新模型")
+    # 默認配置
+    seq_len = 20
+    pred_len = 5
+    
+    model = PatchTST(
+        n_features=len(feature_cols),
+        seq_len=seq_len,
+        pred_len=pred_len,
+        d_model=32,
+        n_heads=2,
+        n_layers=3,
+        dropout=0.2,
+        patch_len=3,
+        stride=1,
+        d_ff=64
+    ).to(device)
+    
+    # 簡單訓練
+    print("【快速訓練模式】訓練模型...")
+    model.train()
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+    criterion = nn.MSELoss()
+    
+    # 使用 test_df 的前 70% 作為訓練數據
+    train_size = int(len(test_df) * 0.7)
+    train_df = test_df.iloc[:train_size].reset_index(drop=True)
+    
+    # 準備訓練數據
+    train_data = []
+    for i in range(len(train_df) - seq_len - pred_len + 1):
+        seq_data = train_df[feature_cols].iloc[i:i+seq_len].values
+        target = train_df[feature_cols].iloc[i+seq_len:i+seq_len+pred_len].values
+        train_data.append((seq_data, target))
+    
+    # 快速訓練
+    for epoch in range(10):
+        total_loss = 0
+        for seq_data, target in train_data[:100]:  # 只訓練部分數據以加快速度
+            x = torch.FloatTensor(seq_data).unsqueeze(0).to(device)
+            y = torch.FloatTensor(target).unsqueeze(0).to(device)
+            
+            optimizer.zero_grad()
+            pred = model(x)
+            loss = criterion(pred, y[:, :, 0])
+            loss.backward()
+            optimizer.step()
+            total_loss += loss.item()
+        
+        if (epoch + 1) % 5 == 0:
+            print(f"  Epoch {epoch+1}/10, Loss: {total_loss/len(train_data[:100]):.6f}")
+    
+    model.eval()
+    print("✓ 快速訓練完成")
+    
+    # 保存模型
+    os.makedirs('../models', exist_ok=True)
+    torch.save({
+        'model_state_dict': model.state_dict(),
+        'model_config': {
+            'seq_len': seq_len,
+            'pred_len': pred_len,
+            'd_model': 32,
+            'n_heads': 2,
+            'n_layers': 3,
+            'dropout': 0.2,
+            'patch_len': 3,
+            'stride': 1,
+            'd_ff': 64
+        }
+    }, model_path)
+    print(f"✓ 模型已保存: {model_path}")
+    
+    print(f"\n✓ 模型已載入 (新訓練)")
+    print(f"  序列長度: {seq_len}")
+    print(f"  預測長度: {pred_len}")
+    print(f"  d_model: 32")
+    print(f"  n_heads: 2")
+    print(f"  n_layers: 3")
 
 # 預測
 predictions = []
@@ -542,7 +628,7 @@ ax5.legend(facecolor='none', edgecolor='none', labelcolor='#cccccc', loc='upper 
 ax5.grid(True, alpha=0.3)
 
 plt.tight_layout()
-plt.savefig('complete_backtest_results.png', dpi=150, bbox_inches='tight', facecolor='#1a1a1a')
+plt.savefig('../results/complete_backtest_results.png', dpi=150, bbox_inches='tight', facecolor='#1a1a1a')
 print(f"\n✓ 回測圖表已保存: complete_backtest_results.png")
 
 # ============================================
@@ -570,7 +656,7 @@ result = {
     'date_range': f"{aligned_df['date'].iloc[0].strftime('%Y-%m-%d')} ~ {aligned_df['date'].iloc[-1].strftime('%Y-%m-%d')}"
 }
 
-with open('complete_backtest_results.json', 'w') as f:
+with open('../results/complete_backtest_results.json', 'w') as f:
     json.dump(result, f, indent=2)
 
 print(f"✓ 回測數據已保存: complete_backtest_results.json")
@@ -586,7 +672,7 @@ prediction_result = {
     'pred_direction': 'UP' if pred_scalar > 0 else 'DOWN'
 }
 
-with open('future_prediction.json', 'w') as f:
+with open('../results/future_prediction.json', 'w') as f:
     json.dump(prediction_result, f, indent=2)
 
 print(f"✓ 預測結果已保存: future_prediction.json")

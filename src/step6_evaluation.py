@@ -37,7 +37,7 @@ model.eval()
 print("✓ 模型已載入")
 
 # 載入並處理數據
-df = pd.read_csv('xiaomi_real.csv')
+df = pd.read_csv('../data/xiaomi_real.csv')
 df['date'] = pd.to_datetime(df['date'])
 
 # 特徵工程

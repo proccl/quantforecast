@@ -30,7 +30,7 @@ PATCH_LEN = checkpoint['model_config']['patch_len']
 STRIDE = checkpoint['model_config']['stride']
 
 # 載入數據
-df = pd.read_csv('xiaomi_real.csv')
+df = pd.read_csv('../data/xiaomi_real.csv')
 df['date'] = pd.to_datetime(df['date'])
 
 # 計算所有特徵

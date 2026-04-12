@@ -12,7 +12,7 @@ print("【真實數據序列長度搜索】小米(1810.HK)")
 print("=" * 70)
 
 # 讀取真實數據
-df = pd.read_csv('xiaomi_real.csv')
+df = pd.read_csv('../data/xiaomi_real.csv')
 df['date'] = pd.to_datetime(df['date'])
 
 print(f"\n數據概覽:")

@@ -122,7 +122,7 @@ print("-" * 40)
 
 # 計算 ATR 止損
 try:
-    df = pd.read_csv('xiaomi_raw.csv')
+    df = pd.read_csv('../data/xiaomi_raw.csv')
     df['tr1'] = df['high'] - df['low']
     df['tr2'] = abs(df['high'] - df['close'].shift(1))
     df['tr3'] = abs(df['low'] - df['close'].shift(1))

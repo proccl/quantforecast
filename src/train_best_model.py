@@ -43,7 +43,7 @@ print(f"n_layers: {ORIG_CONFIG['n_layers']}")
 print(f"patch_len: {PATCH_LEN}, stride: {STRIDE}")
 
 # 載入數據
-df = pd.read_csv('xiaomi_real.csv')
+df = pd.read_csv('../data/xiaomi_real.csv')
 df['date'] = pd.to_datetime(df['date'])
 
 # 特徵工程
