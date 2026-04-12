@@ -1,0 +1,14 @@
+{
+  "best_params": {
+    "d_model": 32,
+    "n_heads": 2,
+    "n_layers": 3,
+    "dropout": 0.15000000000000002,
+    "patch_len": 3,
+    "learning_rate": 0.00020269658755951023,
+    "batch_size": 32
+  },
+  "val_loss": 0.0006514142345016202,
+  "val_accuracy": 0.5869565217391305,
+  "all_trials": 30
+}

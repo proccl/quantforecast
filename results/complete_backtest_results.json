@@ -1,0 +1,19 @@
+{
+  "initial_capital": 100000,
+  "final_capital": 90938.93263694816,
+  "total_return_pct": -9.061067363051844,
+  "buyhold_return_pct": -9.034090909090908,
+  "excess_return_pct": -0.026976453960935842,
+  "max_drawdown_pct": -12.725005755124688,
+  "volatility_annual_pct": 27.51543806526887,
+  "sharpe_ratio": -2.4117610090575643,
+  "sortino_ratio": -1.5371055290281008,
+  "calmar_ratio": -0.7120677841214285,
+  "total_trades": 5,
+  "win_count": 2,
+  "loss_count": 2,
+  "win_rate_pct": 50.0,
+  "test_accuracy": 0.4857142857142857,
+  "test_samples": 35,
+  "date_range": "2026-02-09 ~ 2026-04-01"
+}
