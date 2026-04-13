@@ -6,6 +6,7 @@
 import torch
 import sys
 from pathlib import Path
+from datetime import datetime
 
 # 添加 src 到路徑
 sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
@@ -80,8 +81,11 @@ def main():
     trainer = Trainer(model, config.training, device)
     history = trainer.train(train_loader, val_loader)
     
-    # 保存模型
-    model_path = f"{config.paths.model_dir}/patchtst_model.pth"
+    # 保存模型（文件名包含訓練結束時間）
+    end_time = datetime.now()
+    timestamp = end_time.strftime("%Y%m%d_%H%M%S")
+    model_filename = f"patchtst_model_{timestamp}.pth"
+    model_path = f"{config.paths.model_dir}/{model_filename}"
     Path(config.paths.model_dir).mkdir(parents=True, exist_ok=True)
     trainer.save_checkpoint(model_path)
     
@@ -91,6 +95,8 @@ def main():
     
     logger.info("=" * 60)
     logger.info("【訓練完成】")
+    logger.info(f"訓練結束時間: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
+    logger.info(f"模型保存: {model_filename}")
     logger.info(f"最佳驗證準確率: {trainer.best_val_metric:.2%}")
     logger.info(f"測試集準確率: {results['directional_accuracy']:.2%}")
     logger.info("=" * 60)
