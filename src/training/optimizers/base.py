@@ -28,7 +28,10 @@ class BaseHyperOptimizer(ABC):
         self,
         objective_fn: Callable[[Dict[str, Any]], float],
         search_space: Dict[str, Dict],
-        n_trials: int = 100
+        n_trials: int = 100,
+        timeout: Optional[int] = None,
+        show_progress: bool = True,
+        callbacks: Optional[list] = None
     ) -> None:
         """
         執行優化

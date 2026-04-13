@@ -1,0 +1,14 @@
+{
+  "timestamp": "20260413_222339",
+  "best_params": {
+    "d_model": 32,
+    "n_heads": 8,
+    "n_layers": 4,
+    "dropout": 0.05,
+    "lr": 0.0002310201887845295
+  },
+  "best_score": 0.5833333333333334,
+  "n_trials": 10,
+  "study_name": "val_accuracy",
+  "search_space": "basic"
+}

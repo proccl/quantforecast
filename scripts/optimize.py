@@ -5,7 +5,9 @@
 
 import torch
 import sys
+import json
 from pathlib import Path
+from datetime import datetime
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -32,11 +34,12 @@ def main():
         log_file=f"{config.paths.logs_dir}/optimize.log"
     )
     
-    logger.info("=" * 60)
-    logger.info("【超參數優化入口】Optuna")
-    logger.info("=" * 60)
+    print("=" * 60)
+    print("【超參數優化入口】Optuna")
+    print("=" * 60)
     
     # 1. 加載數據
+    print("\n[1/3] 加載數據...")
     loader = DataLoader(config.data)
     df = loader.load()
     
@@ -50,10 +53,15 @@ def main():
     train_ds, val_ds, test_ds = preprocessor.create_datasets(train_df, val_df, test_df, feature_cols)
     
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print(f"  ✓ 設備: {device}")
+    print(f"  ✓ 特徵數: {len(feature_cols)}")
+    print(f"  ✓ 訓練樣本: {len(train_ds)}")
     
     # 2. 定義目標函數
+    print(f"\n[2/3] 開始優化 (n_trials={config.optimization.n_trials})...")
+    print("-" * 60)
+    
     def objective(params):
-        # 創建模型
         model = PatchTST(
             n_features=len(feature_cols),
             seq_len=config.data.seq_len,
@@ -74,10 +82,9 @@ def main():
             train_ds, val_ds, test_ds, batch_size=batch_size
         )
         
-        # 訓練
         training_cfg = config.training
         training_cfg.lr = params['lr']
-        training_cfg.epochs = 50  # 優化時減少輪數
+        training_cfg.epochs = 50
         
         trainer = Trainer(model, training_cfg, device)
         trainer.train(train_loader, val_loader)
@@ -91,25 +98,65 @@ def main():
         direction=config.optimization.direction
     )
     
+    # 自定義回調：每個 trial 結束後打印進度
+    trial_results = []
+    def progress_callback(study, trial):
+        trial_results.append({
+            'number': trial.number,
+            'params': trial.params,
+            'value': trial.value
+        })
+        best = study.best_trial
+        print(f"  Trial {trial.number:3d}/{config.optimization.n_trials} | "
+              f"Score: {trial.value:.4f} | "
+              f"Best: {best.value:.4f} | "
+              f"Params: d_model={trial.params.get('d_model', '-')}, "
+              f"n_layers={trial.params.get('n_layers', '-')}, "
+              f"lr={trial.params.get('lr', '-'):.4f}")
+    
     optimizer.optimize(
         objective,
         search_space,
         n_trials=config.optimization.n_trials,
-        timeout=config.optimization.timeout
+        timeout=config.optimization.timeout,
+        show_progress=True,
+        callbacks=[progress_callback]
     )
     
     best_params = optimizer.get_best_params()
-    logger.info(f"最佳參數: {best_params}")
+    best_score = optimizer.get_best_score()
+    
+    print("-" * 60)
+    print(f"\n[3/3] 優化完成！")
+    print(f"  最佳驗證準確率: {best_score:.4f}")
+    print(f"  最佳參數:")
+    for k, v in best_params.items():
+        print(f"    {k}: {v}")
     
     # 保存結果
-    result_path = f"{config.paths.results_dir}/optuna_best_params.json"
     Path(config.paths.results_dir).mkdir(parents=True, exist_ok=True)
-    import json
-    with open(result_path, 'w') as f:
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    
+    # 最佳參數
+    best_path = f"{config.paths.results_dir}/optuna_best_params_{timestamp}.json"
+    with open(best_path, 'w') as f:
         json.dump({
+            'timestamp': timestamp,
             'best_params': best_params,
-            'best_score': optimizer.get_best_score()
+            'best_score': best_score,
+            'n_trials': len(trial_results),
+            'study_name': config.optimization.objective,
+            'search_space': config.optimization.search_space
         }, f, indent=2)
+    print(f"\n  ✓ 最佳參數已保存: {best_path}")
+    
+    # 所有 trial 歷史
+    history_path = f"{config.paths.results_dir}/optuna_history_{timestamp}.json"
+    with open(history_path, 'w') as f:
+        json.dump(trial_results, f, indent=2)
+    print(f"  ✓ 優化歷史已保存: {history_path}")
+    
+    print("=" * 60)
 
 
 if __name__ == '__main__':

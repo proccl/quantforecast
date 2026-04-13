@@ -30,7 +30,8 @@ class OptunaOptimizer(BaseHyperOptimizer):
         search_space: Dict[str, Dict],
         n_trials: int = 100,
         timeout: Optional[int] = None,
-        show_progress: bool = True
+        show_progress: bool = True,
+        callbacks: Optional[list] = None
     ) -> None:
         """
         執行 Optuna 優化
@@ -71,7 +72,8 @@ class OptunaOptimizer(BaseHyperOptimizer):
             objective,
             n_trials=n_trials,
             timeout=timeout,
-            show_progress_bar=show_progress
+            show_progress_bar=show_progress,
+            callbacks=callbacks or []
         )
         
         # 保存最佳結果
