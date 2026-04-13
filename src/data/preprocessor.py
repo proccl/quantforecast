@@ -156,10 +156,13 @@ class Preprocessor:
         df: pd.DataFrame,
         feature_cols: List[str]
     ) -> TimeSeriesDataset:
-        """創建單個數據集"""
-        data = df[feature_cols].values
-        target_return = df['target_return_5d'].values
-        target_direction = df['target_direction'].values
+        """創建單個數據集（過濾掉目標為 NaN 的樣本）"""
+        # 只保留目標有效的行（用於訓練/驗證/測試）
+        valid_df = df.dropna(subset=['target_return_5d', 'target_direction'])
+        
+        data = valid_df[feature_cols].values
+        target_return = valid_df['target_return_5d'].values
+        target_direction = valid_df['target_direction'].values
         
         return TimeSeriesDataset(
             data=data,

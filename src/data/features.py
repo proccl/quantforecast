@@ -140,7 +140,7 @@ class FeatureEngineer:
     
     def clean(self, df: pd.DataFrame, feature_cols: Optional[List[str]] = None) -> pd.DataFrame:
         """
-        清洗數據：去除缺失值
+        清洗數據：去除特徵缺失值（保留目標為 NaN 的最新數據用於預測）
         
         Returns:
             清洗後的 DataFrame
@@ -148,10 +148,18 @@ class FeatureEngineer:
         if feature_cols is None:
             feature_cols = self.get_feature_columns()
         
-        required_cols = feature_cols + ['target_return_5d', 'target_direction', 'date']
+        # 只檢查特徵列和必需列（不包括 target 列）
+        required_cols = feature_cols + ['date']
         available_cols = [col for col in required_cols if col in df.columns]
         
+        # 只 drop 特徵列為 NaN 的行
         df_clean = df[available_cols].dropna()
+        
+        # 將目標列加回來（可能包含 NaN）
+        for col in ['target_return_5d', 'target_direction']:
+            if col in df.columns:
+                df_clean[col] = df.loc[df_clean.index, col]
+        
         n_dropped = len(df) - len(df_clean)
         
         if n_dropped > 0:

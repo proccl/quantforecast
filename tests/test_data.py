@@ -6,7 +6,7 @@ import pytest
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.config import DataConfig
 from src.data.loader import DataLoader
@@ -18,7 +18,7 @@ class TestDataLoader:
     """測試數據加載器"""
     
     def test_load_existing_file(self):
-        config = DataConfig(data_file='../../quantforecast/data/xiaomi_real.csv')
+        config = DataConfig(data_file='data/xiaomi_real.csv')
         loader = DataLoader(config)
         df = loader.load()
         
@@ -27,7 +27,7 @@ class TestDataLoader:
         assert 'volume' in df.columns
     
     def test_validate_price_data(self):
-        config = DataConfig(data_file='../../quantforecast/data/xiaomi_real.csv')
+        config = DataConfig(data_file='data/xiaomi_real.csv')
         loader = DataLoader(config)
         df = loader.load()
         
@@ -40,7 +40,7 @@ class TestFeatureEngineer:
     """測試特徵工程"""
     
     def test_create_features(self):
-        config = DataConfig(data_file='../../quantforecast/data/xiaomi_real.csv')
+        config = DataConfig(data_file='data/xiaomi_real.csv')
         df = DataLoader(config).load()
         
         engineer = FeatureEngineer()
@@ -61,7 +61,7 @@ class TestPreprocessor:
     """測試預處理器"""
     
     def test_create_dataset(self):
-        config = DataConfig(data_file='../../quantforecast/data/xiaomi_real.csv')
+        config = DataConfig(data_file='data/xiaomi_real.csv')
         df = DataLoader(config).load()
         
         engineer = FeatureEngineer()

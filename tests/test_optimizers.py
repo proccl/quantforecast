@@ -6,7 +6,7 @@ import pytest
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.training.optimizers.optuna_optimizer import OptunaOptimizer
 from src.training.optimizers.search_spaces import get_search_space, PATCHTST_BASIC

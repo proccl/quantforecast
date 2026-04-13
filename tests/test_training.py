@@ -7,7 +7,7 @@ import pytest
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.config import DataConfig, TrainingConfig
 from src.data.loader import DataLoader
@@ -42,7 +42,7 @@ class TestTrainer:
     """測試訓練器"""
     
     def test_train_epoch(self):
-        config = DataConfig(data_file='../../quantforecast/data/xiaomi_real.csv')
+        config = DataConfig(data_file='data/xiaomi_real.csv')
         df = DataLoader(config).load()
         
         engineer = FeatureEngineer()
@@ -90,7 +90,7 @@ class TestEvaluator:
     """測試評估器"""
     
     def test_evaluate(self):
-        config = DataConfig(data_file='../../quantforecast/data/xiaomi_real.csv')
+        config = DataConfig(data_file='data/xiaomi_real.csv')
         df = DataLoader(config).load()
         
         engineer = FeatureEngineer()
