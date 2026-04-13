@@ -87,7 +87,20 @@ def main():
     model_filename = f"patchtst_model_{timestamp}.pth"
     model_path = f"{config.paths.model_dir}/{model_filename}"
     Path(config.paths.model_dir).mkdir(parents=True, exist_ok=True)
-    trainer.save_checkpoint(model_path)
+    
+    # 構建模型配置供回測使用
+    model_config = {
+        'seq_len': config.data.seq_len,
+        'pred_len': config.data.pred_len,
+        'd_model': config.model.d_model,
+        'n_heads': config.model.n_heads,
+        'n_layers': config.model.n_layers,
+        'dropout': config.model.dropout,
+        'patch_len': 5,
+        'stride': 2,
+        'd_ff': config.model.d_ff
+    }
+    trainer.save_checkpoint(model_path, model_config)
     
     # 測試集評估
     evaluator = Evaluator(device)

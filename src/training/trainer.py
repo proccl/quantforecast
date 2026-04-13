@@ -193,7 +193,7 @@ class Trainer:
         
         return self.patience_counter >= self.config.early_stopping_patience
     
-    def save_checkpoint(self, path: str) -> None:
+    def save_checkpoint(self, path: str, model_config: Optional[Dict] = None) -> None:
         """保存模型檢查點"""
         checkpoint = {
             'model_state_dict': self.model.state_dict(),
@@ -202,6 +202,8 @@ class Trainer:
             'history': self.history,
             'config': self.config
         }
+        if model_config is not None:
+            checkpoint['model_config'] = model_config
         torch.save(checkpoint, path)
         logger.info(f"✓ 模型已保存: {path}")
     

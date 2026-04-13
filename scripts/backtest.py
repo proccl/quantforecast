@@ -43,14 +43,54 @@ def main():
     feature_cols = engineer.get_feature_columns()
     df_clean = engineer.clean(df_features, feature_cols)
     
-    # 2. 加載模型
-    model_path = f"{config.paths.model_dir}/patchtst_bayesian_best.pth"
-    if not Path(model_path).exists():
-        model_path = f"{config.paths.model_dir}/patchtst_model.pth"
+    # 2. 加載模型（優先加載最新的 timestamp 模型，再 fallback 到 bayesian）
+    model_dir = Path(config.paths.model_dir)
+    
+    # 查找最新的 patchtst_model_YYYYMMDD_HHMMSS.pth
+    model_files = sorted(model_dir.glob("patchtst_model_*.pth"), reverse=True)
+    if model_files:
+        model_path = model_files[0]
+    elif (model_dir / "patchtst_bayesian_best.pth").exists():
+        model_path = model_dir / "patchtst_bayesian_best.pth"
+    else:
+        model_path = model_dir / "patchtst_model.pth"
+    
+    logger.info(f"加載模型: {model_path.name}")
     
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    checkpoint = torch.load(model_path, map_location=device)
-    loaded_config = checkpoint['model_config']
+    checkpoint = torch.load(model_path, map_location=device, weights_only=False)
+    
+    # 兼容舊模型格式（有 model_config）和新格式（從 config.yaml 讀取）
+    if 'model_config' in checkpoint:
+        loaded_config = checkpoint['model_config']
+    elif 'config' in checkpoint and hasattr(checkpoint['config'], 'model'):
+        # 新格式：config 包含 data 和 model
+        cfg = checkpoint['config']
+        loaded_config = {
+            'seq_len': cfg.data.seq_len,
+            'pred_len': cfg.data.pred_len,
+            'd_model': cfg.model.d_model,
+            'n_heads': cfg.model.n_heads,
+            'n_layers': cfg.model.n_layers,
+            'dropout': cfg.model.dropout,
+            'patch_len': 5,  # 默認值
+            'stride': 2,     # 默認值
+            'd_ff': cfg.model.d_ff
+        }
+    else:
+        # 兜底：使用當前 config.yaml
+        logger.warning("模型配置缺失，使用當前 config.yaml")
+        loaded_config = {
+            'seq_len': config.data.seq_len,
+            'pred_len': config.data.pred_len,
+            'd_model': config.model.d_model,
+            'n_heads': config.model.n_heads,
+            'n_layers': config.model.n_layers,
+            'dropout': config.model.dropout,
+            'patch_len': 5,
+            'stride': 2,
+            'd_ff': config.model.d_ff
+        }
     
     model = PatchTST(
         n_features=len(feature_cols),
