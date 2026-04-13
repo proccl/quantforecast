@@ -8,8 +8,8 @@ import sys
 from pathlib import Path
 from datetime import datetime
 
-# 添加 src 到路徑
-sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
+# 添加項目根目錄到路徑
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.config import get_config
 from src.data.loader import DataLoader
