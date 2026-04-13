@@ -46,3 +46,19 @@ models/*.pt
 
 # Data (optional - if data is private)
 # data/*.csv
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.pytest_cache/
+
+# 模型和日誌
+models/*.pth
+logs/
+*.log
+
+# 環境
+.env
+venv/
