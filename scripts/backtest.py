@@ -17,6 +17,7 @@ from scipy import stats
 import json
 from pathlib import Path
 import sys
+from datetime import datetime
 from sklearn.metrics import accuracy_score, confusion_matrix
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -343,6 +344,16 @@ print(f"\n預測日期範圍: {future_dates[0].strftime('%Y-%m-%d')} ~ {future_d
 # ============================================
 fig = plt.figure(figsize=(16, 14), facecolor='#1a1a1a')
 
+# 大標題：回測日期時間 + T+1操作建議
+backtest_time = datetime.now().strftime("%Y-%m-%d %H:%M")
+t1_signal = "BUY" if pred_scalar > 0 else "SELL / HOLD"
+t1_target = latest_close * (1 + pred_scalar / 5)
+signal_color = "#51cf66" if pred_scalar > 0 else "#ff6b6b"
+fig.suptitle(
+    f"Backtest Time: {backtest_time}  |  T+1 Signal: {t1_signal}  |  Target: {t1_target:.2f} HKD ({pred_scalar/5*100:+.2f}%)",
+    color="#ffffff", fontsize=16, fontweight="bold", y=0.995
+)
+
 # 設置深色主題
 plt.rcParams['axes.facecolor'] = '#2d2d2d'
 plt.rcParams['axes.edgecolor'] = '#666666'
@@ -507,7 +518,7 @@ ax5.set_title(f'Stock Price: Actual vs Predicted (T+5) | Future 5-Day Forecast: 
 ax5.legend(facecolor='none', edgecolor='none', labelcolor='#cccccc', loc='upper left')
 ax5.grid(True, alpha=0.3)
 
-plt.tight_layout()
+plt.tight_layout(rect=[0, 0, 1, 0.98])
 
 Path(config.paths.results_dir).mkdir(parents=True, exist_ok=True)
 output_path = f"{config.paths.results_dir}/complete_backtest_results.png"
