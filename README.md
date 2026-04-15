@@ -193,7 +193,13 @@ for train_idx, val_idx in TimeSeriesSplit(n_splits=5):
     # 在之後的數據上驗證
 ```
 
-**優化結果**:
+**最新優化結果** (2026-04-15):
+- **CV Score**: 0.6008 (Trial 8/11)
+- **最佳參數**: d_model=32, n_heads=4, n_layers=1, dropout=0.3, lr=0.00033
+- **優化方法**: Optuna + Walk-forward CV (3 splits)
+- **即時保存**: 每個 trial 完成後自動保存結果
+
+**歷史優化結果**:
 - CV Score: 0.669
 - 測試集準確率: 51.61%
 - 模型穩定性顯著提升

@@ -126,26 +126,37 @@ class Trainer:
         return self.history
     
     def _train_epoch(self, train_loader: DataLoader) -> float:
-        """單個訓練 epoch"""
+        """單個訓練 epoch（支持樣本加權）"""
         self.model.train()
         total_loss = 0.0
+        total_weight = 0.0
         n_batches = 0
         
         for batch in train_loader:
             x = batch['x'].to(self.device)
             y_return = batch['y_return'].to(self.device)
+            # 獲取樣本權重（如果沒有，默認為1）
+            weights = batch.get('weight', torch.ones_like(y_return)).to(self.device)
             
             self.optimizer.zero_grad()
             pred = self.model(x)
-            loss = self.criterion(pred, y_return)
-            loss.backward()
+            
+            # 加權損失：每個樣本的損失乘以對應權重
+            raw_loss = self.criterion(pred, y_return)
+            # HuberLoss 返回的是平均損失，我們需要逐樣本計算
+            # 使用 reduction='none' 來獲取逐樣本損失
+            loss_per_sample = nn.functional.huber_loss(pred, y_return, delta=0.1, reduction='none')
+            weighted_loss = (loss_per_sample * weights).mean()
+            
+            weighted_loss.backward()
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
             self.optimizer.step()
             
-            total_loss += loss.item()
+            total_loss += weighted_loss.item() * weights.sum().item()
+            total_weight += weights.sum().item()
             n_batches += 1
         
-        return total_loss / max(n_batches, 1)
+        return total_loss / max(total_weight, 1e-8)
     
     def _validate_epoch(self, val_loader: DataLoader) -> Tuple[float, float]:
         """單個驗證 epoch"""

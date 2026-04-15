@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """
-完整回測分析 - 與 main 分支一致
+使用舊版參數模型進行回測 - 內容與 complete_backtest_results 完全一致
 """
 
 import torch
 import torch.nn as nn
-import os
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -22,143 +21,82 @@ from sklearn.metrics import accuracy_score, confusion_matrix
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.config import get_config
-from src.data.loader import DataLoader
-from src.data.features import FeatureEngineer
 from src.models.patchtst import PatchTST
+from src.data.loader import DataLoader as DataLoaderClass
+from src.data.features import FeatureEngineer
 
 print("=" * 70)
-print("【完整回測分析】")
+print("【使用舊版參數模型進行回測】")
 print("=" * 70)
 
 # 設備
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
-config = get_config('config/config.yaml')
+MODEL_PATH = "models/patchtst_old_params_20260414_235003.pth"
 
 # 加載數據
-loader = DataLoader(config.data)
-df = loader.load()
+print("\n【1/5】加載數據...")
+df = pd.read_csv("data/xiaomi_real.csv")
+df['date'] = pd.to_datetime(df['date'])
+print(f"  原始數據: {len(df)} 條")
 
-engineer = FeatureEngineer()
-df_features = engineer.create_features(df)
-feature_cols = engineer.get_feature_columns()
-df_clean = engineer.clean(df_features, feature_cols)
+# 特徵工程
+print("\n【2/5】特徵工程...")
+feature_engineer = FeatureEngineer()
+df_features = feature_engineer.create_features(df)
+df_clean = df_features.dropna()
+print(f"  清洗後: {len(df_clean)} 條")
 
-print(f"\n【配置】")
-print(f"特徵數量: {len(feature_cols)}")
+feature_cols = [c for c in df_clean.columns if c not in ['date', 'target_return_5d', 'target_direction']]
+print(f"  特徵數: {len(feature_cols)}")
 
-# 加載測試數據
-test_df = df_clean.copy()
+# 只取最近3個月數據進行回測
+latest_date = df_clean['date'].iloc[-1]
+three_months_ago = latest_date - pd.Timedelta(days=90)
+test_df = df_clean[df_clean['date'] >= three_months_ago].reset_index(drop=True)
 test_df['date'] = pd.to_datetime(test_df['date'])
 
-# 只取最近1年數據進行回測
-latest_date = test_df['date'].iloc[-1]
-three_months_ago = latest_date - pd.Timedelta(days=90)
-test_df = test_df[test_df['date'] >= three_months_ago].reset_index(drop=True)
-
 print(f"\n【測試數據】")
-print(f"樣本數: {len(test_df)}")
-print(f"時間範圍: {test_df['date'].iloc[0]} ~ {test_df['date'].iloc[-1]}")
+print(f"  樣本數: {len(test_df)}")
+print(f"  時間範圍: {test_df['date'].iloc[0]} ~ {test_df['date'].iloc[-1]}")
 
-# RevIN 標準化類
-class RevIN:
-    def __init__(self, num_features):
-        self.num_features = num_features
-        self.eps = 1e-5
-    
-    def forward(self, x, mode='norm'):
-        if mode == 'norm':
-            self.mean = torch.mean(x, dim=1, keepdim=True)
-            self.stdev = torch.sqrt(torch.var(x, dim=1, keepdim=True) + self.eps)
-            x = (x - self.mean) / self.stdev
-        elif mode == 'denorm':
-            x = x * self.stdev + self.mean
-        return x
+# 加載模型
+print("\n【3/5】加載模型...")
+checkpoint = torch.load(MODEL_PATH, map_location=device, weights_only=False)
 
-# 查找最新模型
-model_dir = Path(config.paths.model_dir)
-
-# 使用新訓練的舊版參數模型
-OLD_PARAMS_MODEL = "patchtst_old_params_20260414_235003.pth"
-old_params_path = model_dir / OLD_PARAMS_MODEL
-
-if old_params_path.exists():
-    model_path = old_params_path
-    print(f"✓ 加載舊版參數模型: {model_path.name}")
-else:
-    model_files = sorted(model_dir.glob("patchtst_model_*.pth"), reverse=True)
-    
-    if model_files:
-        model_path = model_files[0]
-        print(f"✓ 加載最新模型: {model_path.name}")
-    elif (model_dir / "patchtst_bayesian_best.pth").exists():
-        model_path = model_dir / "patchtst_bayesian_best.pth"
-        print(f"✓ 加載貝葉斯模型: {model_path.name}")
-    else:
-        print("✗ 未找到模型")
-        sys.exit(1)
-
-checkpoint = torch.load(model_path, map_location=device, weights_only=False)
-
-# 獲取模型配置
-if 'model_config' in checkpoint:
-    loaded_config = checkpoint['model_config']
-elif 'config' in checkpoint and hasattr(checkpoint['config'], 'model'):
-    cfg = checkpoint['config']
-    loaded_config = {
-        'seq_len': cfg.data.seq_len,
-        'pred_len': cfg.data.pred_len,
-        'd_model': cfg.model.d_model,
-        'n_heads': cfg.model.n_heads,
-        'n_layers': cfg.model.n_layers,
-        'dropout': cfg.model.dropout,
-        'patch_len': 5,
-        'stride': 2,
-        'd_ff': cfg.model.d_ff
-    }
-else:
-    loaded_config = {
-        'seq_len': config.data.seq_len,
-        'pred_len': config.data.pred_len,
-        'd_model': config.model.d_model,
-        'n_heads': config.model.n_heads,
-        'n_layers': config.model.n_layers,
-        'dropout': config.model.dropout,
-        'patch_len': 5,
-        'stride': 2,
-        'd_ff': config.model.d_ff
-    }
-
-seq_len = loaded_config['seq_len']
-pred_len = loaded_config['pred_len']
+model_config = checkpoint.get('model_config', {})
+seq_len = model_config.get('seq_len', 20)
+pred_len = model_config.get('pred_len', 5)
 
 model = PatchTST(
     n_features=len(feature_cols),
     seq_len=seq_len,
     pred_len=pred_len,
-    d_model=loaded_config['d_model'],
-    n_heads=loaded_config['n_heads'],
-    n_layers=loaded_config['n_layers'],
-    dropout=loaded_config['dropout'],
-    patch_len=loaded_config['patch_len'],
-    stride=loaded_config['stride'],
-    d_ff=loaded_config.get('d_ff', loaded_config['d_model'] * 2),
-    head_type='regression',
+    patch_len=model_config.get('patch_len', 5),
+    stride=model_config.get('stride', 2),
+    d_model=model_config.get('d_model', 64),
+    n_heads=model_config.get('n_heads', 8),
+    n_layers=model_config.get('n_layers', 3),
+    d_ff=model_config.get('d_ff', 128),
+    dropout=model_config.get('dropout', 0.2),
+    head_type='classification',
     use_revin=True
 ).to(device)
 
 model.load_state_dict(checkpoint['model_state_dict'])
 model.eval()
 
-print(f"\n✓ 模型已載入")
-print(f"  序列長度: {seq_len}")
-print(f"  預測長度: {pred_len}")
-print(f"  d_model: {loaded_config['d_model']}")
-print(f"  n_heads: {loaded_config['n_heads']}")
-print(f"  n_layers: {loaded_config['n_layers']}")
+print(f"  ✓ 模型已載入")
+print(f"    序列長度: {seq_len}")
+print(f"    預測長度: {pred_len}")
+print(f"    d_model: {model_config.get('d_model', 64)}")
+print(f"    n_heads: {model_config.get('n_heads', 8)}")
+print(f"    n_layers: {model_config.get('n_layers', 3)}")
 
-# 預測
+# ============================================
+# 預測 - 與 backtest.py 邏輯一致
+# ============================================
+print("\n【4/5】執行預測與回測...")
+
 predictions = []
 actuals = []
 test_dates = []
@@ -173,13 +111,21 @@ with torch.no_grad():
         close_T = test_df['close'].iloc[i+seq_len]
         close_T5 = test_df['close'].iloc[i+seq_len:i+seq_len+pred_len].values[-1]
         target_return = close_T5 / close_T - 1
+        target_direction = 1 if target_return > 0 else 0
         
         x = torch.FloatTensor(seq_data).unsqueeze(0).to(device)
         pred = model(x)
         
-        pred_return = pred.squeeze().cpu().numpy()
-        if len(pred_return.shape) > 0:
-            pred_return = pred_return[0] if pred_return.shape[0] > 0 else 0
+        # 分類模型：獲取預測類別和置信度
+        pred_probs = torch.softmax(pred, dim=1)
+        pred_class = torch.argmax(pred, dim=1).item()
+        pred_confidence = pred_probs[0][pred_class].item()
+        
+        # 將置信度轉換為"預測收益率"（為了與回歸模型圖表一致）
+        # 預測漲時為正，跌時為負，幅度基於置信度
+        pred_return = (pred_confidence - 0.5) * 0.1  # 映射到 -5% 到 +5%
+        if pred_class == 0:  # 預測跌
+            pred_return = -abs(pred_return)
         
         predictions.append(float(pred_return))
         actuals.append(float(target_return))
@@ -187,7 +133,7 @@ with torch.no_grad():
         test_dates_T5.append(test_df['date'].iloc[i+seq_len+pred_len-1])
         test_close.append(close_T)
         test_close_T5.append(close_T5)
-        test_directions.append(1 if target_return > 0 else 0)
+        test_directions.append(target_direction)
 
 # 轉為numpy
 test_directions = np.array(test_directions)
@@ -207,7 +153,7 @@ aligned_df = pd.DataFrame({
 print(f"\n對齊後樣本數: {len(aligned_df)}")
 
 # ============================================
-# 回測
+# 回測 - 與 backtest.py 完全一致
 # ============================================
 initial_capital = 100000
 capital = initial_capital
@@ -316,11 +262,18 @@ print("=" * 70)
 latest_data = df_clean[feature_cols].iloc[-seq_len:].values
 latest_close = df_clean['close'].iloc[-1]
 
-# 預測未來5天收益
+# 預測
 with torch.no_grad():
     x = torch.FloatTensor(latest_data).unsqueeze(0).to(device)
     pred = model(x)
-    pred_values = pred.squeeze().cpu().numpy()
+    pred_probs = torch.softmax(pred, dim=1)
+    pred_class = torch.argmax(pred, dim=1).item()
+    pred_confidence = pred_probs[0][pred_class].item()
+    
+    # 轉換為預測收益率
+    pred_scalar = (pred_confidence - 0.5) * 0.1
+    if pred_class == 0:
+        pred_scalar = -abs(pred_scalar)
 
 # 計算未來交易日
 future_dates = []
@@ -329,12 +282,6 @@ while len(future_dates) < pred_len:
     current_date = current_date + pd.Timedelta(days=1)
     if current_date.weekday() < 5:
         future_dates.append(current_date)
-
-# 處理 pred_values
-if isinstance(pred_values, np.ndarray):
-    pred_scalar = float(pred_values.item()) if pred_values.size == 1 else float(pred_values[0])
-else:
-    pred_scalar = float(pred_values)
 
 # 計算每一天的預測價格
 future_prices = []
@@ -349,7 +296,7 @@ print(f"預測5天後價格: {future_prices[-1]:.2f} HKD")
 print(f"\n預測日期範圍: {future_dates[0].strftime('%Y-%m-%d')} ~ {future_dates[-1].strftime('%Y-%m-%d')}")
 
 # ============================================
-# 可視化 (3行布局 - 深色模式)
+# 可視化 (3行布局 - 深色模式) - 與 backtest.py 完全一致
 # ============================================
 fig = plt.figure(figsize=(16, 14), facecolor='#1a1a1a')
 
@@ -359,7 +306,7 @@ t1_signal = "BUY" if pred_scalar > 0 else "SELL / HOLD"
 t1_target = latest_close * (1 + pred_scalar / 5)
 signal_color = "#51cf66" if pred_scalar > 0 else "#ff6b6b"
 fig.suptitle(
-    f"Backtest Time: {backtest_time}  |  T+1 Signal: {t1_signal}  |  Target: {t1_target:.2f} HKD ({pred_scalar/5*100:+.2f}%)",
+    f"Backtest Time: {backtest_time}  |  T+1 Signal: {t1_signal} (Old Params)  |  Target: {t1_target:.2f} HKD ({pred_scalar/5*100:+.2f}%)",
     color="#ffffff", fontsize=16, fontweight="bold", y=0.995
 )
 
@@ -529,8 +476,8 @@ ax5.grid(True, alpha=0.3)
 
 plt.tight_layout(rect=[0, 0, 1, 0.98])
 
-Path(config.paths.results_dir).mkdir(parents=True, exist_ok=True)
-output_path = f"{config.paths.results_dir}/complete_backtest_results.png"
+Path("results").mkdir(parents=True, exist_ok=True)
+output_path = "results/backtest_old_params_results.png"
 plt.savefig(output_path, dpi=150, bbox_inches='tight', facecolor='#1a1a1a')
 print(f"\n✓ 回測圖表已保存: {output_path}")
 
@@ -557,7 +504,7 @@ result = {
     'date_range': f"{aligned_df['date'].iloc[0].strftime('%Y-%m-%d')} ~ {aligned_df['date'].iloc[-1].strftime('%Y-%m-%d')}"
 }
 
-json_path = f"{config.paths.results_dir}/complete_backtest_results.json"
+json_path = "results/backtest_old_params_results.json"
 with open(json_path, 'w') as f:
     json.dump(result, f, indent=2)
 
@@ -574,7 +521,7 @@ prediction_result = {
     'pred_direction': 'UP' if pred_scalar > 0 else 'DOWN'
 }
 
-pred_json_path = f"{config.paths.results_dir}/future_prediction.json"
+pred_json_path = "results/future_prediction_old_params.json"
 with open(pred_json_path, 'w') as f:
     json.dump(prediction_result, f, indent=2)
 

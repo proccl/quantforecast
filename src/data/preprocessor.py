@@ -23,7 +23,8 @@ class TimeSeriesDataset(Dataset):
         data: np.ndarray,
         target_return: np.ndarray,
         target_direction: np.ndarray,
-        seq_len: int
+        seq_len: int,
+        sample_weights: Optional[np.ndarray] = None
     ):
         """
         Args:
@@ -31,12 +32,20 @@ class TimeSeriesDataset(Dataset):
             target_return: 回歸目標 [n_samples]
             target_direction: 分類目標 [n_samples]
             seq_len: 輸入序列長度
+            sample_weights: 樣本權重 [n_samples]，用於指數衰減等加權策略
         """
         self.data = data
         self.target_return = target_return
         self.target_direction = target_direction
         self.seq_len = seq_len
         self.n_samples = len(data) - seq_len
+        
+        # 樣本權重：如果沒有提供，默認均勻權重
+        if sample_weights is not None:
+            # 確保權重長度與有效樣本數匹配
+            self.sample_weights = sample_weights[seq_len:seq_len + self.n_samples]
+        else:
+            self.sample_weights = np.ones(self.n_samples, dtype=np.float32)
         
     def __len__(self) -> int:
         return max(0, self.n_samples)
@@ -45,11 +54,13 @@ class TimeSeriesDataset(Dataset):
         x = self.data[idx:idx + self.seq_len]
         y_return = self.target_return[idx + self.seq_len - 1]
         y_direction = self.target_direction[idx + self.seq_len - 1]
+        weight = self.sample_weights[idx]
         
         return {
             'x': torch.FloatTensor(x),
             'y_return': torch.FloatTensor([y_return]),
-            'y_direction': torch.LongTensor([y_direction])
+            'y_direction': torch.LongTensor([y_direction]),
+            'weight': torch.FloatTensor([weight])
         }
 
 
@@ -154,7 +165,8 @@ class Preprocessor:
     def _create_single_dataset(
         self,
         df: pd.DataFrame,
-        feature_cols: List[str]
+        feature_cols: List[str],
+        sample_weights: Optional[np.ndarray] = None
     ) -> TimeSeriesDataset:
         """創建單個數據集（過濾掉目標為 NaN 的樣本）"""
         # 只保留目標有效的行（用於訓練/驗證/測試）
@@ -168,7 +180,51 @@ class Preprocessor:
             data=data,
             target_return=target_return,
             target_direction=target_direction,
-            seq_len=self.seq_len
+            seq_len=self.seq_len,
+            sample_weights=sample_weights
+        )
+    
+    def create_weighted_dataset(
+        self,
+        df: pd.DataFrame,
+        feature_cols: List[str],
+        decay_lambda: float = 0.01
+    ) -> TimeSeriesDataset:
+        """
+        創建帶指數衰減權重的數據集
+        
+        Args:
+            df: 數據框
+            feature_cols: 特徵列
+            decay_lambda: 衰減係數，越大對近期數據權重越高
+                         w_t = exp(λ * (t - T))
+        """
+        valid_df = df.dropna(subset=['target_return_5d', 'target_direction'])
+        n_samples = len(valid_df)
+        
+        # 生成時間索引（0到n_samples-1）
+        time_indices = np.arange(n_samples)
+        
+        # 指數衰減權重：w_t = exp(λ * (t - T))
+        # t 是當前索引，T 是最新索引（n_samples - 1）
+        T = n_samples - 1
+        weights = np.exp(decay_lambda * (time_indices - T))
+        
+        # 歸一化權重（可選，但通常有助於穩定訓練）
+        weights = weights / weights.sum() * n_samples
+        
+        logger.info(f"指數衰減權重統計: min={weights.min():.4f}, max={weights.max():.4f}, mean={weights.mean():.4f}")
+        
+        data = valid_df[feature_cols].values
+        target_return = valid_df['target_return_5d'].values
+        target_direction = valid_df['target_direction'].values
+        
+        return TimeSeriesDataset(
+            data=data,
+            target_return=target_return,
+            target_direction=target_direction,
+            seq_len=self.seq_len,
+            sample_weights=weights
         )
     
     def get_sample_shape(

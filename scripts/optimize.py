@@ -205,19 +205,42 @@ def main():
     )
     
     trial_results = []
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    results_dir = Path(config.paths.results_dir)
+    results_dir.mkdir(parents=True, exist_ok=True)
+    
+    # 中間結果文件路徑
+    history_path = results_dir / f"optuna_history_{timestamp}.json"
+    best_params_path = results_dir / f"optuna_best_params_{timestamp}.json"
+    
     def progress_callback(study, trial):
-        trial_results.append({
+        # 記錄當前 trial
+        trial_data = {
             'number': trial.number,
             'params': trial.params,
-            'value': trial.value
-        })
+            'value': trial.value,
+            'datetime': datetime.now().isoformat()
+        }
+        trial_results.append(trial_data)
+        
+        # 即時保存歷史
+        with open(history_path, 'w') as f:
+            json.dump(trial_results, f, indent=2)
+        
+        # 即時保存當前最佳
         best = study.best_trial
-        print(f"  Trial {trial.number:3d}/20 | "
-              f"Score: {trial.value:.4f} | "
-              f"Best: {best.value:.4f} | "
-              f"Params: d_model={trial.params.get('d_model', '-')}, "
-              f"n_layers={trial.params.get('n_layers', '-')}, "
-              f"dropout={trial.params.get('dropout', '-'):.2f}")
+        with open(best_params_path, 'w') as f:
+            json.dump({
+                'timestamp': timestamp,
+                'best_params': best.params,
+                'best_cv_score': best.value,
+                'best_trial_number': best.number,
+                'n_trials_completed': len(trial_results),
+                'study_name': 'walk_forward_cv',
+                'search_space': config.optimization.search_space
+            }, f, indent=2)
+        
+        print(f"  Trial {trial.number:3d} | Score: {trial.value:.4f} | Best: {best.value:.4f} | Saved")
     
     optimizer.optimize(
         objective,
@@ -285,19 +308,28 @@ def main():
     Path(config.paths.results_dir).mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     
-    # 保存最佳參數
-    best_path = f"{config.paths.results_dir}/optuna_best_params_{timestamp}.json"
-    with open(best_path, 'w') as f:
+    # 更新最終結果（已完成即時保存，這裡只打印最終結果）
+    final_best_params = optimizer.get_best_params()
+    final_best_score = optimizer.get_best_score()
+    
+    # 更新最佳參數文件（添加完成標記）
+    with open(best_params_path, 'w') as f:
         json.dump({
             'timestamp': timestamp,
-            'best_params': best_params,
-            'best_cv_score': best_score,
-            'final_test_accuracy': test_results['directional_accuracy'],
-            'n_trials': len(trial_results),
+            'best_params': final_best_params,
+            'best_cv_score': final_best_score,
+            'best_trial_number': optimizer.study.best_trial.number,
+            'n_trials_completed': len(trial_results),
             'study_name': 'walk_forward_cv',
-            'search_space': config.optimization.search_space
+            'search_space': config.optimization.search_space,
+            'completed': True
         }, f, indent=2)
-    print(f"\n  ✓ 最佳參數已保存: {best_path}")
+    
+    print(f"\n[3/3] 優化完成！")
+    print(f"  最佳 CV 分數: {final_best_score:.4f}")
+    print(f"  結果已即時保存於:")
+    print(f"    - {history_path}")
+    print(f"    - {best_params_path}")
     
     # 保存模型
     model_config = {
@@ -318,12 +350,6 @@ def main():
     final_trainer.save_checkpoint(model_path, model_config)
     
     print(f"  ✓ 模型已保存: {model_path}")
-    
-    # 保存歷史
-    history_path = f"{config.paths.results_dir}/optuna_history_{timestamp}.json"
-    with open(history_path, 'w') as f:
-        json.dump(trial_results, f, indent=2)
-    print(f"  ✓ 優化歷史已保存: {history_path}")
     
     print("=" * 70)
     print("\n優化和訓練完成！可以運行 backtest 了：")

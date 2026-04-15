@@ -50,14 +50,22 @@ def main():
     feature_cols = engineer.get_feature_columns()
     df_clean = engineer.clean(df_features, feature_cols)
     
-    # 3. 預處理
+    # 3. 預處理（帶指數衰減權重）
     logger.info("【3/4】數據預處理")
     preprocessor = Preprocessor(config.data)
     train_df, val_df, test_df = preprocessor.split(df_clean)
-    train_ds, val_ds, test_ds = preprocessor.create_datasets(train_df, val_df, test_df, feature_cols)
+    
+    # 訓練集使用指數衰減權重
+    decay_lambda = 0.01
+    train_ds = preprocessor.create_weighted_dataset(train_df, feature_cols, decay_lambda=decay_lambda)
+    val_ds = preprocessor._create_single_dataset(val_df, feature_cols)
+    test_ds = preprocessor._create_single_dataset(test_df, feature_cols)
+    
     train_loader, val_loader, test_loader = preprocessor.create_dataloaders(
         train_ds, val_ds, test_ds, batch_size=config.training.batch_size
     )
+    
+    logger.info(f"  ✓ 訓練集指數衰減 λ={decay_lambda} (近期數據權重更高)")
     
     # 4. 訓練模型
     logger.info("【4/4】模型訓練")
