@@ -16,9 +16,13 @@ logger = logging.getLogger(__name__)
 class Evaluator:
     """統一評估邏輯"""
     
-    def __init__(self, device: torch.device):
+    def __init__(self, device: torch.device, head_type: str = 'regression'):
         self.device = device
-        self.criterion = torch.nn.HuberLoss(delta=0.1)
+        self.head_type = head_type
+        if head_type == 'classification':
+            self.criterion = torch.nn.CrossEntropyLoss()
+        else:
+            self.criterion = torch.nn.HuberLoss(delta=0.1)
     
     def evaluate(self, model: PatchTST, test_loader: DataLoader) -> Dict[str, float]:
         """
@@ -45,15 +49,27 @@ class Evaluator:
                 y_direction = batch['y_direction'].to(self.device)
                 
                 pred = model(x)
-                loss = self.criterion(pred, y_return)
+                
+                # 根據模型類型計算損失和準確率
+                if self.head_type == 'classification':
+                    # 分類模型
+                    loss = self.criterion(pred, y_direction.squeeze().long())
+                    pred_class = torch.argmax(pred, dim=1)
+                    correct += (pred_class == y_direction.squeeze()).sum().item()
+                    
+                    # 對於分類模型，獲取正類的概率作為預測值（用於後續計算）
+                    pred_value = torch.softmax(pred, dim=1)[:, 1]  # 正類概率
+                else:
+                    # 回歸模型
+                    loss = self.criterion(pred, y_return)
+                    pred_direction = (pred.squeeze() > 0).long()
+                    correct += (pred_direction == y_direction.squeeze()).sum().item()
+                    pred_value = pred.squeeze()
                 
                 total_loss += loss.item()
-                
-                pred_direction = (pred.squeeze() > 0).long()
-                correct += (pred_direction == y_direction.squeeze()).sum().item()
                 total += y_direction.numel()
                 
-                all_preds.append(pred.cpu())
+                all_preds.append(pred_value.cpu())
                 all_targets.append(y_return.cpu())
                 all_directions.append(y_direction.cpu())
                 

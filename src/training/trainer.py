@@ -30,7 +30,13 @@ class Trainer:
         self.config = config
         self.device = device
         
-        self.criterion = nn.HuberLoss(delta=0.1)
+        # 根據模型類型選擇損失函數
+        self.head_type = getattr(model, 'head_type', 'regression')
+        if self.head_type == 'classification':
+            self.criterion = nn.CrossEntropyLoss()
+        else:
+            self.criterion = nn.HuberLoss(delta=0.1)
+        
         self.optimizer = self._build_optimizer()
         self.scheduler = self._build_scheduler()
         
@@ -135,18 +141,23 @@ class Trainer:
         for batch in train_loader:
             x = batch['x'].to(self.device)
             y_return = batch['y_return'].to(self.device)
+            y_direction = batch['y_direction'].to(self.device)
             # 獲取樣本權重（如果沒有，默認為1）
             weights = batch.get('weight', torch.ones_like(y_return)).to(self.device)
             
             self.optimizer.zero_grad()
             pred = self.model(x)
             
-            # 加權損失：每個樣本的損失乘以對應權重
-            raw_loss = self.criterion(pred, y_return)
-            # HuberLoss 返回的是平均損失，我們需要逐樣本計算
-            # 使用 reduction='none' 來獲取逐樣本損失
-            loss_per_sample = nn.functional.huber_loss(pred, y_return, delta=0.1, reduction='none')
-            weighted_loss = (loss_per_sample * weights).mean()
+            # 根據模型類型計算損失
+            if self.head_type == 'classification':
+                # 分類：使用 CrossEntropyLoss，目標是方向類別 (0/1)
+                loss = self.criterion(pred, y_direction.squeeze().long())
+                weighted_loss = loss  # 分類暫不支持樣本加權
+            else:
+                # 回歸：使用 HuberLoss，目標是收益率
+                # 使用 reduction='none' 來獲取逐樣本損失
+                loss_per_sample = nn.functional.huber_loss(pred, y_return, delta=0.1, reduction='none')
+                weighted_loss = (loss_per_sample * weights).mean()
             
             weighted_loss.backward()
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
@@ -173,12 +184,21 @@ class Trainer:
                 y_direction = batch['y_direction'].to(self.device)
                 
                 pred = self.model(x)
-                loss = self.criterion(pred, y_return)
+                
+                # 根據模型類型計算損失和準確率
+                if self.head_type == 'classification':
+                    # 分類：使用 CrossEntropyLoss
+                    loss = self.criterion(pred, y_direction.squeeze().long())
+                    # 預測類別
+                    pred_class = torch.argmax(pred, dim=1)
+                    correct += (pred_class == y_direction.squeeze()).sum().item()
+                else:
+                    # 回歸：使用 HuberLoss
+                    loss = self.criterion(pred, y_return)
+                    pred_direction = (pred.squeeze() > 0).long()
+                    correct += (pred_direction == y_direction.squeeze()).sum().item()
                 
                 total_loss += loss.item()
-                
-                pred_direction = (pred.squeeze() > 0).long()
-                correct += (pred_direction == y_direction.squeeze()).sum().item()
                 total += y_direction.numel()
                 n_batches += 1
         

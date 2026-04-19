@@ -118,7 +118,7 @@ def walk_forward_cv_objective(
             n_layers=params['n_layers'],
             d_ff=params['d_model'] * 2,
             dropout=params['dropout'],
-            head_type='regression',
+            head_type='classification',
             use_revin=True
         )
         
@@ -281,7 +281,7 @@ def main():
         n_layers=best_params['n_layers'],
         d_ff=best_params['d_model'] * 2,
         dropout=best_params['dropout'],
-        head_type='regression',
+        head_type='classification',
         use_revin=True
     )
     
@@ -299,7 +299,7 @@ def main():
     final_history = final_trainer.train(train_loader, val_loader)
     
     # 測試集評估
-    evaluator = Evaluator(device)
+    evaluator = Evaluator(device, head_type='classification')
     test_results = evaluator.evaluate(final_model, test_loader)
     
     print(f"\n最終測試集準確率: {test_results['directional_accuracy']:.2%}")

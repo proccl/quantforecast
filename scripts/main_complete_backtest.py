@@ -1,10 +1,6 @@
-#!/usr/bin/env python3
-"""
-使用舊版參數模型進行回測 - 內容與 complete_backtest_results 完全一致
-"""
-
 import torch
 import torch.nn as nn
+import os
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -13,96 +9,220 @@ from matplotlib.lines import Line2D
 from matplotlib.collections import LineCollection
 import matplotlib.dates as mdates
 from scipy import stats
-import json
-from pathlib import Path
-import sys
-from datetime import datetime
+import pickle
 from sklearn.metrics import accuracy_score, confusion_matrix
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
-from src.models.patchtst import PatchTST
-from src.data.loader import DataLoader as DataLoaderClass
-from src.data.features import FeatureEngineer
+from step3_data_preprocessing import TimeSeriesDataset, RevIN
+from step4_patchtst_model import PatchTST
 
 print("=" * 70)
-print("【使用舊版參數模型進行回測】")
+print("【完整回測分析】貝葉斯優化配置")
 print("=" * 70)
 
 # 設備
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-MODEL_PATH = "models/patchtst_old_params_20260414_235003.pth"
 
-# 加載數據
-print("\n【1/5】加載數據...")
-df = pd.read_csv("data/xiaomi_real.csv")
-df['date'] = pd.to_datetime(df['date'])
-print(f"  原始數據: {len(df)} 條")
+# 貝葉斯優化配置
+BEST_PARAMS = {
+    'd_model': 32,
+    'n_heads': 2,
+    'n_layers': 3,
+    'dropout': 0.15,
+    'patch_len': 3,
+    'stride': 1,
+    'seq_len': 20,
+    'pred_len': 5,
+}
 
-# 特徵工程
-print("\n【2/5】特徵工程...")
-feature_engineer = FeatureEngineer()
-df_features = feature_engineer.create_features(df)
-df_clean = df_features.dropna()
-print(f"  清洗後: {len(df_clean)} 條")
+# 加載數據配置
+with open('data_config.pkl', 'rb') as f:
+    data_config = pickle.load(f)
 
-feature_cols = [c for c in df_clean.columns if c not in ['date', 'target_return_5d', 'target_direction']]
-print(f"  特徵數: {len(feature_cols)}")
+feature_cols = data_config['feature_cols']
+# scaler_params 可能不存在，使用默認值
+scaler_params = data_config.get('scaler_params', {})
 
-# 只取最近3個月數據進行回測
-latest_date = df_clean['date'].iloc[-1]
-three_months_ago = latest_date - pd.Timedelta(days=90)
-test_df = df_clean[df_clean['date'] >= three_months_ago].reset_index(drop=True)
+print(f"\n【配置】")
+print(f"特徵數量: {len(feature_cols)}")
+
+# 加載測試數據
+test_df = pd.read_csv('../data/xiaomi_real.csv')
 test_df['date'] = pd.to_datetime(test_df['date'])
 
+# 技術指標計算
+def calculate_indicators(df):
+    df = df.copy()
+    for span in [5, 10, 20]:
+        df[f'ema_{span}'] = df['close'].ewm(span=span, adjust=False).mean()
+        df[f'ema_{span}_ratio'] = df['close'] / df[f'ema_{span}'] - 1
+    df['ema_12'] = df['close'].ewm(span=12, adjust=False).mean()
+    df['ema_26'] = df['close'].ewm(span=26, adjust=False).mean()
+    df['macd'] = df['ema_12'] - df['ema_26']
+    df['macd_signal'] = df['macd'].ewm(span=9, adjust=False).mean()
+    df['macd_hist'] = df['macd'] - df['macd_signal']
+    df['atr_14'] = df['high'].rolling(14).max() - df['low'].rolling(14).min()
+    df['atr_ratio'] = df['atr_14'] / df['close']
+    delta = df['close'].diff()
+    gain = (delta.where(delta > 0, 0)).rolling(14).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
+    rs = gain / loss
+    df['rsi_14'] = 100 - (100 / (1 + rs))
+    df['obv'] = (np.sign(df['close'].diff()) * df['volume']).cumsum()
+    df['volume_ratio'] = df['volume'] / df['volume'].rolling(20).mean()
+    df['return_1d'] = df['close'].pct_change(1)
+    df['return_5d'] = df['close'].pct_change(5)
+    df['volatility_20d'] = df['return_1d'].rolling(20).std()
+    return df
+
+test_df = calculate_indicators(test_df)
+test_df = test_df.dropna()
+
+# 只取最近1年數據進行回測
+latest_date = test_df['date'].iloc[-1]
+three_months_ago = latest_date - pd.Timedelta(days=90)
+test_df = test_df[test_df['date'] >= three_months_ago].reset_index(drop=True)
+
 print(f"\n【測試數據】")
-print(f"  樣本數: {len(test_df)}")
-print(f"  時間範圍: {test_df['date'].iloc[0]} ~ {test_df['date'].iloc[-1]}")
+print(f"樣本數: {len(test_df)}")
+print(f"時間範圍: {test_df['date'].iloc[0]} ~ {test_df['date'].iloc[-1]}")
 
-# 加載模型
-print("\n【3/5】加載模型...")
-checkpoint = torch.load(MODEL_PATH, map_location=device, weights_only=False)
+# 標準化
+class RevIN:
+    def __init__(self, num_features):
+        self.num_features = num_features
+        self.eps = 1e-5
+    
+    def forward(self, x, mode='norm'):
+        if mode == 'norm':
+            self.mean = torch.mean(x, dim=1, keepdim=True)
+            self.stdev = torch.sqrt(torch.var(x, dim=1, keepdim=True) + self.eps)
+            x = (x - self.mean) / self.stdev
+        elif mode == 'denorm':
+            x = x * self.stdev + self.mean
+        return x
 
-model_config = checkpoint.get('model_config', {})
-seq_len = model_config.get('seq_len', 20)
-pred_len = model_config.get('pred_len', 5)
+# 加載模型或訓練新模型
+model_path = '../models/patchtst_bayesian_best.pth'
 
-model = PatchTST(
-    n_features=len(feature_cols),
-    seq_len=seq_len,
-    pred_len=pred_len,
-    patch_len=model_config.get('patch_len', 5),
-    stride=model_config.get('stride', 2),
-    d_model=model_config.get('d_model', 64),
-    n_heads=model_config.get('n_heads', 8),
-    n_layers=model_config.get('n_layers', 3),
-    d_ff=model_config.get('d_ff', 128),
-    dropout=model_config.get('dropout', 0.2),
-    head_type='classification',
-    use_revin=True
-).to(device)
+if os.path.exists(model_path):
+    print(f"✓ 加載現有模型: {model_path}")
+    checkpoint = torch.load(model_path, map_location=device)
+    loaded_config = checkpoint['model_config']
+    
+    model = PatchTST(
+        n_features=len(feature_cols),
+        seq_len=loaded_config['seq_len'],
+        pred_len=loaded_config['pred_len'],
+        d_model=loaded_config['d_model'],
+        n_heads=loaded_config['n_heads'],
+        n_layers=loaded_config['n_layers'],
+        dropout=loaded_config['dropout'],
+        patch_len=loaded_config['patch_len'],
+        stride=loaded_config['stride'],
+        d_ff=loaded_config.get('d_ff', loaded_config['d_model'] * 2)
+    ).to(device)
+    
+    model.load_state_dict(checkpoint['model_state_dict'])
+    model.eval()
+    
+    # 使用加載的配置
+    seq_len = loaded_config['seq_len']
+    pred_len = loaded_config['pred_len']
+    
+    print(f"\n✓ 模型已載入")
+    print(f"  序列長度: {seq_len}")
+    print(f"  預測長度: {pred_len}")
+    print(f"  d_model: {loaded_config['d_model']}")
+    print(f"  n_heads: {loaded_config['n_heads']}")
+    print(f"  n_layers: {loaded_config['n_layers']}")
+else:
+    print("⚠ 模型不存在，使用默認配置創建新模型")
+    # 默認配置
+    seq_len = 20
+    pred_len = 5
+    
+    model = PatchTST(
+        n_features=len(feature_cols),
+        seq_len=seq_len,
+        pred_len=pred_len,
+        d_model=32,
+        n_heads=2,
+        n_layers=3,
+        dropout=0.2,
+        patch_len=3,
+        stride=1,
+        d_ff=64
+    ).to(device)
+    
+    # 簡單訓練
+    print("【快速訓練模式】訓練模型...")
+    model.train()
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+    criterion = nn.MSELoss()
+    
+    # 使用 test_df 的前 70% 作為訓練數據
+    train_size = int(len(test_df) * 0.7)
+    train_df = test_df.iloc[:train_size].reset_index(drop=True)
+    
+    # 準備訓練數據
+    train_data = []
+    for i in range(len(train_df) - seq_len - pred_len + 1):
+        seq_data = train_df[feature_cols].iloc[i:i+seq_len].values
+        target = train_df[feature_cols].iloc[i+seq_len:i+seq_len+pred_len].values
+        train_data.append((seq_data, target))
+    
+    # 快速訓練
+    for epoch in range(10):
+        total_loss = 0
+        for seq_data, target in train_data[:100]:  # 只訓練部分數據以加快速度
+            x = torch.FloatTensor(seq_data).unsqueeze(0).to(device)
+            y = torch.FloatTensor(target).unsqueeze(0).to(device)
+            
+            optimizer.zero_grad()
+            pred = model(x)
+            loss = criterion(pred, y[:, :, 0])
+            loss.backward()
+            optimizer.step()
+            total_loss += loss.item()
+        
+        if (epoch + 1) % 5 == 0:
+            print(f"  Epoch {epoch+1}/10, Loss: {total_loss/len(train_data[:100]):.6f}")
+    
+    model.eval()
+    print("✓ 快速訓練完成")
+    
+    # 保存模型
+    os.makedirs('../models', exist_ok=True)
+    torch.save({
+        'model_state_dict': model.state_dict(),
+        'model_config': {
+            'seq_len': seq_len,
+            'pred_len': pred_len,
+            'd_model': 32,
+            'n_heads': 2,
+            'n_layers': 3,
+            'dropout': 0.2,
+            'patch_len': 3,
+            'stride': 1,
+            'd_ff': 64
+        }
+    }, model_path)
+    print(f"✓ 模型已保存: {model_path}")
+    
+    print(f"\n✓ 模型已載入 (新訓練)")
+    print(f"  序列長度: {seq_len}")
+    print(f"  預測長度: {pred_len}")
+    print(f"  d_model: 32")
+    print(f"  n_heads: 2")
+    print(f"  n_layers: 3")
 
-model.load_state_dict(checkpoint['model_state_dict'])
-model.eval()
-
-print(f"  ✓ 模型已載入")
-print(f"    序列長度: {seq_len}")
-print(f"    預測長度: {pred_len}")
-print(f"    d_model: {model_config.get('d_model', 64)}")
-print(f"    n_heads: {model_config.get('n_heads', 8)}")
-print(f"    n_layers: {model_config.get('n_layers', 3)}")
-
-# ============================================
-# 預測 - 與 backtest.py 邏輯一致
-# ============================================
-print("\n【4/5】執行預測與回測...")
-
+# 預測
 predictions = []
 actuals = []
 test_dates = []
-test_dates_T5 = []
+test_dates_T5 = []  # T+5 日期
 test_close = []
-test_close_T5 = []
+test_close_T5 = []  # T+5 實際價格
 test_directions = []
 
 with torch.no_grad():
@@ -111,29 +231,23 @@ with torch.no_grad():
         close_T = test_df['close'].iloc[i+seq_len]
         close_T5 = test_df['close'].iloc[i+seq_len:i+seq_len+pred_len].values[-1]
         target_return = close_T5 / close_T - 1
-        target_direction = 1 if target_return > 0 else 0
         
         x = torch.FloatTensor(seq_data).unsqueeze(0).to(device)
+        
+        # 使用模型內置的RevIN
         pred = model(x)
         
-        # 分類模型：獲取預測類別和置信度
-        pred_probs = torch.softmax(pred, dim=1)
-        pred_class = torch.argmax(pred, dim=1).item()
-        pred_confidence = pred_probs[0][pred_class].item()
-        
-        # 將置信度轉換為"預測收益率"（為了與回歸模型圖表一致）
-        # 預測漲時為正，跌時為負，幅度基於置信度
-        pred_return = (pred_confidence - 0.5) * 0.1  # 映射到 -5% 到 +5%
-        if pred_class == 0:  # 預測跌
-            pred_return = -abs(pred_return)
+        pred_return = pred.squeeze().cpu().numpy()
+        if len(pred_return.shape) > 0:
+            pred_return = pred_return[0] if pred_return.shape[0] > 0 else 0
         
         predictions.append(float(pred_return))
         actuals.append(float(target_return))
-        test_dates.append(test_df['date'].iloc[i+seq_len])
-        test_dates_T5.append(test_df['date'].iloc[i+seq_len+pred_len-1])
+        test_dates.append(test_df['date'].iloc[i+seq_len])  # T 時刻
+        test_dates_T5.append(test_df['date'].iloc[i+seq_len+pred_len-1])  # T+5 時刻
         test_close.append(close_T)
         test_close_T5.append(close_T5)
-        test_directions.append(target_direction)
+        test_directions.append(1 if target_return > 0 else 0)
 
 # 轉為numpy
 test_directions = np.array(test_directions)
@@ -153,7 +267,7 @@ aligned_df = pd.DataFrame({
 print(f"\n對齊後樣本數: {len(aligned_df)}")
 
 # ============================================
-# 回測 - 與 backtest.py 完全一致
+# 回測
 # ============================================
 initial_capital = 100000
 capital = initial_capital
@@ -249,44 +363,45 @@ print(f"盈利交易: {win_count} 次")
 print(f"虧損交易: {loss_count} 次")
 print(f"勝率: {win_rate:.2f}%")
 
+# 日收益計算
 strategy_returns = np.diff(equity_curve) / equity_curve[:-1]
 
 # ============================================
-# 未來5天預測
+# 未來5天預測 (移到繪圖之前)
 # ============================================
 print("\n" + "=" * 70)
 print("【未來5天預測】")
 print("=" * 70)
 
-# 獲取最新數據
-latest_data = df_clean[feature_cols].iloc[-seq_len:].values
-latest_close = df_clean['close'].iloc[-1]
+# 獲取最新20天數據
+latest_data = test_df[feature_cols].iloc[-seq_len:].values
+latest_close = test_df['close'].iloc[-1]
+latest_date = test_df['date'].iloc[-1]
 
-# 預測
+# 預測未來5天收益
 with torch.no_grad():
     x = torch.FloatTensor(latest_data).unsqueeze(0).to(device)
     pred = model(x)
-    pred_probs = torch.softmax(pred, dim=1)
-    pred_class = torch.argmax(pred, dim=1).item()
-    pred_confidence = pred_probs[0][pred_class].item()
-    
-    # 轉換為預測收益率
-    pred_scalar = (pred_confidence - 0.5) * 0.1
-    if pred_class == 0:
-        pred_scalar = -abs(pred_scalar)
+    pred_values = pred.squeeze().cpu().numpy()
 
-# 計算未來交易日
+# 計算未來5天每一天的預測價格（簡化：假設線性增長到目標價格）
 future_dates = []
 current_date = latest_date
 while len(future_dates) < pred_len:
     current_date = current_date + pd.Timedelta(days=1)
-    if current_date.weekday() < 5:
+    if current_date.weekday() < 5:  # 週一到週五
         future_dates.append(current_date)
 
-# 計算每一天的預測價格
+# 處理 pred_values（可能是標量或數組）
+if isinstance(pred_values, np.ndarray):
+    pred_scalar = float(pred_values.item()) if pred_values.size == 1 else float(pred_values[0])
+else:
+    pred_scalar = float(pred_values)
+
+# 計算每一天的預測價格（線性插值）
 future_prices = []
 for i in range(pred_len):
-    progress = (i + 1) / pred_len
+    progress = (i + 1) / pred_len  # 1/5, 2/5, 3/5, 4/5, 5/5
     price = latest_close * (1 + pred_scalar * progress)
     future_prices.append(price)
 
@@ -296,19 +411,9 @@ print(f"預測5天後價格: {future_prices[-1]:.2f} HKD")
 print(f"\n預測日期範圍: {future_dates[0].strftime('%Y-%m-%d')} ~ {future_dates[-1].strftime('%Y-%m-%d')}")
 
 # ============================================
-# 可視化 (3行布局 - 深色模式) - 與 backtest.py 完全一致
+# 可視化 (3行布局 - 深色模式)
 # ============================================
 fig = plt.figure(figsize=(16, 14), facecolor='#1a1a1a')
-
-# 大標題：回測日期時間 + T+1操作建議
-backtest_time = datetime.now().strftime("%Y-%m-%d %H:%M")
-t1_signal = "BUY" if pred_scalar > 0 else "SELL / HOLD"
-t1_target = latest_close * (1 + pred_scalar / 5)
-signal_color = "#51cf66" if pred_scalar > 0 else "#ff6b6b"
-fig.suptitle(
-    f"Backtest Time: {backtest_time}  |  T+1 Signal: {t1_signal} (Old Params)  |  Target: {t1_target:.2f} HKD ({pred_scalar/5*100:+.2f}%)",
-    color="#ffffff", fontsize=16, fontweight="bold", y=0.995
-)
 
 # 設置深色主題
 plt.rcParams['axes.facecolor'] = '#2d2d2d'
@@ -428,45 +533,93 @@ ax4.legend(handles=legend_elements, loc='lower left', facecolor='none',
 # 5. 預測股價 vs 實際股價 + 未來5天預測
 ax5 = plt.subplot(3, 1, 3)
 
-# 藍線: 完整實際價格
-df_plot = df_clean.copy()
-df_plot['date'] = pd.to_datetime(df_plot['date'])
-df_plot = df_plot[df_plot['date'] >= three_months_ago].reset_index(drop=True)
-
-ax5.plot(df_plot['date'], df_plot['close'], 
+# 藍線: 完整實際價格 (所有歷史數據，到最新一日)
+ax5.plot(test_df['date'], test_df['close'], 
          linewidth=2, color='#4a9eff', alpha=0.7, label='Actual Price', zorder=1)
 
-# 黃線: T+5 時刻的預測價格
+# 黃線: T+5 時刻的預測價格 (歷史部分)
 aligned_df['pred_price_T5'] = aligned_df['close'] * (1 + aligned_df['pred_return'])
 
-# 預測區間開始日期
-future_trading_dates = future_dates
+# 預測區間開始日期 (04-13)
+future_trading_dates = []
+current = latest_date
+while len(future_trading_dates) < pred_len:
+    current += pd.Timedelta(days=1)
+    if current.weekday() < 5:
+        future_trading_dates.append(current)
 prediction_start = future_trading_dates[0]
 
-# 歷史預測（黃色虛線）
+# 歷史預測（黃色虛線）- 只顯示到預測區間開始前
 historical_mask = aligned_df['date_T5'] < prediction_start
 ax5.plot(aligned_df.loc[historical_mask, 'date_T5'], 
          aligned_df.loc[historical_mask, 'pred_price_T5'], 
          linewidth=2.5, color='#ffd43b', linestyle='--', alpha=0.9, label='Predicted Price @T+5', zorder=3)
 
-# 未來5天預測（綠色/紅色）
+# 黃線最後一個點（在預測區間前）
+last_yellow_date = aligned_df.loc[historical_mask, 'date_T5'].iloc[-1]
+last_yellow_price = aligned_df.loc[historical_mask, 'pred_price_T5'].iloc[-1]
+
+# 未來5天預測（綠色/紅色實線）- 對於每個未來日期，找到能預測它的T時刻
+# T-x 表示往前數x個交易日
+test_dates_list = test_df['date'].tolist()
+latest_idx = len(test_df) - 1  # 04-10的索引
+
 future_color = '#51cf66' if pred_scalar > 0 else '#ff6b6b'
 
-# 黃線最後一個點
-last_yellow_date = aligned_df.loc[historical_mask, 'date_T5'].iloc[-1] if historical_mask.sum() > 0 else aligned_df['date_T5'].iloc[-1]
-last_yellow_price = aligned_df.loc[historical_mask, 'pred_price_T5'].iloc[-1] if historical_mask.sum() > 0 else aligned_df['pred_price_T5'].iloc[-1]
+# 對於每個未來日期，找到對應的T時刻
+# 04-13 = T-4, 04-14 = T-3, 04-15 = T-2, 04-16 = T-1, 04-17 = T
+future_5day_dates = []
+future_5day_prices = []
+future_5day_sources = []
 
-# 繪製未來預測線
-if future_trading_dates:
-    ax5.plot([last_yellow_date, future_trading_dates[0]], 
-             [last_yellow_price, future_prices[0]], 
+for i, target_date in enumerate(future_trading_dates):
+    # 往前數 (5-i) 個交易日找到T
+    # i=0(04-13): 往前數5個交易日 -> T-5
+    # i=1(04-14): 往前數4個交易日 -> T-4
+    # i=2(04-15): 往前數3個交易日 -> T-3
+    # i=3(04-16): 往前數2個交易日 -> T-2
+    # i=4(04-17): 往前數1個交易日 -> T-1
+    days_back = pred_len - i  # 5, 4, 3, 2, 1
+    
+    # 找到往前數 days_back 個交易日的T
+    if latest_idx - days_back >= 0:
+        t_idx = latest_idx - days_back
+        t_date = test_df['date'].iloc[t_idx]
+        t_close = test_df['close'].iloc[t_idx]
+        
+        # 用T時刻的數據預測T+5價格
+        pred_price = t_close * (1 + pred_scalar)
+        
+        future_5day_dates.append(target_date)
+        future_5day_prices.append(pred_price)
+        future_5day_sources.append(f"T-{days_back}")
+    else:
+        # 數據不足，使用最近的T
+        t_date = test_df['date'].iloc[0]
+        t_close = test_df['close'].iloc[0]
+        pred_price = t_close * (1 + pred_scalar)
+        future_5day_dates.append(target_date)
+        future_5day_prices.append(pred_price)
+        future_5day_sources.append("T-?")
+
+# 黃線最後一個點（歷史預測的最後一個T+5）
+last_yellow_date = aligned_df['date_T5'].iloc[-1]
+last_yellow_price = aligned_df['pred_price_T5'].iloc[-1]
+
+# 綠線只在綠色區間內顯示（04-13~04-17）
+if future_5day_dates:
+    # 畫一條線從黃線最後一個點連接到綠線第一個點
+    ax5.plot([last_yellow_date, future_5day_dates[0]], 
+             [last_yellow_price, future_5day_prices[0]], 
              linewidth=2.5, color='#ffd43b', linestyle='--', alpha=0.9, zorder=3)
     
-    ax5.plot(future_trading_dates, future_prices, 
+    # 繪製綠色區間內的點
+    ax5.plot(future_5day_dates, future_5day_prices, 
              linewidth=3, color=future_color, linestyle='-', alpha=0.9, marker='o', markersize=8,
              label=f'Future 5-Day ({pred_scalar*100:+.2f}%)', zorder=4)
     
-    ax5.axvspan(future_trading_dates[0], future_trading_dates[-1], alpha=0.1, color=future_color)
+    # 添加預測區間陰影
+    ax5.axvspan(future_5day_dates[0], future_5day_dates[-1], alpha=0.1, color=future_color)
 
 ax5.set_xlabel('Date', color='#cccccc')
 ax5.set_ylabel('Price (HKD)', color='#cccccc')
@@ -474,16 +627,15 @@ ax5.set_title(f'Stock Price: Actual vs Predicted (T+5) | Future 5-Day Forecast: 
 ax5.legend(facecolor='none', edgecolor='none', labelcolor='#cccccc', loc='upper left')
 ax5.grid(True, alpha=0.3)
 
-plt.tight_layout(rect=[0, 0, 1, 0.98])
-
-Path("results").mkdir(parents=True, exist_ok=True)
-output_path = "results/backtest_old_params_results.png"
-plt.savefig(output_path, dpi=150, bbox_inches='tight', facecolor='#1a1a1a')
-print(f"\n✓ 回測圖表已保存: {output_path}")
+plt.tight_layout()
+plt.savefig('../results/complete_backtest_results.png', dpi=150, bbox_inches='tight', facecolor='#1a1a1a')
+print(f"\n✓ 回測圖表已保存: complete_backtest_results.png")
 
 # ============================================
 # 保存結果
 # ============================================
+import json
+
 result = {
     'initial_capital': initial_capital,
     'final_capital': float(final_capital),
@@ -504,11 +656,10 @@ result = {
     'date_range': f"{aligned_df['date'].iloc[0].strftime('%Y-%m-%d')} ~ {aligned_df['date'].iloc[-1].strftime('%Y-%m-%d')}"
 }
 
-json_path = "results/backtest_old_params_results.json"
-with open(json_path, 'w') as f:
+with open('../results/complete_backtest_results.json', 'w') as f:
     json.dump(result, f, indent=2)
 
-print(f"✓ 回測數據已保存: {json_path}")
+print(f"✓ 回測數據已保存: complete_backtest_results.json")
 
 # 保存預測結果
 prediction_result = {
@@ -521,11 +672,10 @@ prediction_result = {
     'pred_direction': 'UP' if pred_scalar > 0 else 'DOWN'
 }
 
-pred_json_path = "results/future_prediction_old_params.json"
-with open(pred_json_path, 'w') as f:
+with open('../results/future_prediction.json', 'w') as f:
     json.dump(prediction_result, f, indent=2)
 
-print(f"✓ 預測結果已保存: {pred_json_path}")
+print(f"✓ 預測結果已保存: future_prediction.json")
 
 print("\n" + "=" * 70)
 print("【回測完成】")
