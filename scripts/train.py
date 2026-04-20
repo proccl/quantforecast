@@ -82,7 +82,7 @@ def main():
         n_layers=config.model.n_layers,
         d_ff=config.model.d_ff,
         dropout=config.model.dropout,
-        head_type='regression',
+        head_type='classification',
         use_revin=True
     )
     
@@ -111,7 +111,7 @@ def main():
     trainer.save_checkpoint(model_path, model_config)
     
     # 測試集評估
-    evaluator = Evaluator(device)
+    evaluator = Evaluator(device, head_type='classification')
     results = evaluator.evaluate(model, test_loader)
     
     logger.info("=" * 60)

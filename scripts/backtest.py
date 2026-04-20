@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.models.patchtst import PatchTST
 from src.config import get_config
+from src.data.features import FeatureEngineer
 from sklearn.metrics import accuracy_score
 
 
@@ -202,24 +203,11 @@ def main():
     df = pd.read_csv("data/xiaomi_real.csv")
     df['date'] = pd.to_datetime(df['date'])
     
-    # 特徵工程
-    df['returns'] = df['close'].pct_change()
-    df['sma_5'] = df['close'].rolling(5).mean()
-    df['sma_20'] = df['close'].rolling(20).mean()
-    
-    delta = df['close'].diff()
-    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-    rs = gain / loss
-    df['rsi'] = 100 - (100 / (1 + rs))
-    
-    df['macd'] = df['close'].ewm(span=12).mean() - df['close'].ewm(span=26).mean()
-    df['volatility'] = df['returns'].rolling(20).std()
-    
-    df_clean = df.dropna()
-    
-    feature_cols = ['open', 'high', 'low', 'close', 'volume', 
-                   'returns', 'sma_5', 'sma_20', 'rsi', 'macd', 'volatility']
+    # 特徵工程（與訓練一致）
+    engineer = FeatureEngineer()
+    df_features = engineer.create_features(df)
+    feature_cols = engineer.get_feature_columns()
+    df_clean = engineer.clean(df_features, feature_cols)
     
     print(f"\n【配置】")
     print(f"特徵數量: {len(feature_cols)}")
@@ -245,7 +233,7 @@ def main():
     if args.model:
         model_path = model_dir / args.model
     else:
-        CLASSIFICATION_MODEL = "patchtst_classification_fixed_20260416_121241.pth"
+        CLASSIFICATION_MODEL = "patchtst_model_20260420_155712.pth"
         model_path = model_dir / CLASSIFICATION_MODEL
     
     if not model_path.exists():

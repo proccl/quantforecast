@@ -1,5 +1,5 @@
 # QuantForecast 配置文件
-# 所有参数集中管理，避免硬编码
+# 使用 Walk-forward CV 优化后的最佳参数
 
 # ============ 数据配置 ============
 data:
@@ -7,7 +7,7 @@ data:
   name: "xiaomi"                     # 数据文件前缀
   data_file: "data/xiaomi_real.csv"  # 数据文件路径
   
-  # 时间序列参数
+  # 时间序列参数 (优化后)
   seq_len: 20                        # 输入序列长度 (历史天数)
   pred_len: 5                        # 预测序列长度 (未来天数)
   
@@ -20,14 +20,14 @@ data:
 model:
   name: "PatchTST"
   
-  # PatchTST 参数
-  patch_size: 16
-  stride: 8                          # patch 步长
-  d_model: 32                        # 嵌入维度
-  n_heads: 8                         # 注意力头数
-  n_layers: 4                        # Transformer 层数
+  # PatchTST 参数 (优化后)
+  patch_size: 5                       # patch 长度
+  stride: 2                          # patch 步长
+  d_model: 64                        # 嵌入维度 (优化后)
+  n_heads: 8                         # 注意力头数 (优化后)
+  n_layers: 3                        # Transformer 层数 (优化后)
   d_ff: 128                          # 前馈网络维度
-  dropout: 0.1                       # Dropout 率
+  dropout: 0.2                       # Dropout 率 (优化后)
   
   # 输出参数
   output_dim: 1                      # 输出维度
@@ -36,8 +36,8 @@ model:
 training:
   # 优化器参数
   optimizer: "Adam"
-  lr: 0.001                          # 学习率
-  weight_decay: 0.0001                 # 权重衰减
+  lr: 0.000205                       # 学习率 (优化后: 2.05e-4)
+  weight_decay: 0.0001               # 权重衰减
   
   # 学习率调度
   scheduler: "ReduceLROnPlateau"
@@ -46,7 +46,7 @@ training:
   
   # 训练参数
   epochs: 100
-  batch_size: 32
+  batch_size: 32                     # (优化后)
   
   # 早停
   early_stopping: true
@@ -98,4 +98,3 @@ logging:
   log_to_file: true
   log_to_console: true
   format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-
